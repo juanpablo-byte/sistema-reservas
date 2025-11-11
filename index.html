@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Reserva de Viajes</title>
+    <!-- Carga de Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de la fuente Inter de Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Carga de Google Maps API (Reemplaza con tu clave) -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRkkceq3iPyF4tdapA_ig76UBcXJR92G8"></script>
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .container-bg {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        /* Estilos para la lista de autocompletado */
+        #patient-autocomplete-list {
+            position: absolute;
+            z-index: 10;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-top: none;
+            width: 100%;
+            background-color: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        .autocomplete-item:hover {
+            background-color: #f3f4f6;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Estilos del Modal */
+        .modal {
+            display: none; 
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 10% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 90%;
+            max-width: 450px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="container-bg p-4 w-full">
+        
+        <!-- PANTALLA 2: FORMULARIO DE RESERVA (Dashboard Principal) -->
+        <div id="reservation-view" class="w-full max-w-2xl bg-white rounded-xl shadow-2xl p-6 md:p-8">
+            <h1 class="text-3xl font-bold text-center mb-2 text-indigo-700">Reserva de Viaje</h1>
+            <p class="text-center text-sm text-gray-500 mb-6">Completa los datos para calcular el costo de tu traslado.</p>
+            
+            <!-- Aquí se insertará el resumen de confirmación después de la reserva -->
+            <div id="reservation-result-container"></div>
+
+            <form id="reservation-form" class="space-y-4">
+                
+                <!-- Autenticación Requerida -->
+                <div id="auth-required-message" class="p-3 bg-red-100 text-red-700 font-medium rounded-lg text-sm text-center">
+                    Debes <button type="button" id="open-auth-modal-btn" class="font-bold underline hover:text-red-900">Iniciar Sesión o Registrarte</button> para realizar una reserva.
+                </div>
+
+                <!-- Paciente (con Autocompletado) -->
+                <div>
+                    <label for="patient-name" class="block text-sm font-semibold text-gray-700 mb-1">Nombre Completo del Paciente</label>
+                    <div class="relative">
+                        <input type="text" id="patient-name" required placeholder="Nombre y Apellido (ej: Juan Pérez)"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled />
+                        <div id="patient-autocomplete-list" class="hidden rounded-b-lg"></div>
+                    </div>
+                </div>
+
+                <!-- Teléfono -->
+                <div>
+                    <label for="patient-phone" class="block text-sm font-semibold text-gray-700 mb-1">Teléfono del Paciente</label>
+                    <input type="tel" id="patient-phone" required placeholder="+56912345678"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled />
+                </div>
+
+                <!-- Origen y Destino -->
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="address-origin" class="block text-sm font-semibold text-gray-700 mb-1">Dirección de Origen</label>
+                        <input type="text" id="address-origin" required placeholder="Ej: Av. Apoquindo 100"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled />
+                    </div>
+                    <div>
+                        <label for="address-destination" class="block text-sm font-semibold text-gray-700 mb-1">Dirección de Destino</label>
+                        <input type="text" id="address-destination" required placeholder="Ej: Calle Merced 200"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled />
+                    </div>
+                </div>
+
+                <!-- Fecha y Hora -->
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="reservation-datetime" class="block text-sm font-semibold text-gray-700 mb-1">Fecha y Hora del Viaje</label>
+                        <input type="datetime-local" id="reservation-datetime" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled />
+                    </div>
+                    <div class="flex items-center pt-5">
+                        <input type="checkbox" id="retorno-checkbox" class="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" disabled>
+                        <label for="retorno-checkbox" class="ml-2 text-sm font-medium text-gray-700">Incluir Retorno (viaje inverso)</label>
+                    </div>
+                </div>
+                
+                <!-- Comentarios / Movilidad -->
+                <div>
+                    <label for="comments" class="block text-sm font-semibold text-gray-700 mb-1">Comentarios (Dificultad de Movilidad u otros)</label>
+                    <textarea id="comments" rows="2" placeholder="Silla de ruedas, requiere asistencia especial, etc."
+                              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" disabled></textarea>
+                </div>
+
+                <!-- Resultados y Botón de Cálculo -->
+                <div class="mt-6 p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <h3 class="text-lg font-bold text-indigo-700 mb-2 flex justify-between items-center">
+                        Información de Viaje
+                        <div id="calculation-status" class="loader hidden"></div>
+                    </h3>
+                    <p id="distance-info" class="text-gray-600 text-sm">Distancia: -- Km | Tiempo: -- min</p>
+                    <p id="price-info" class="text-xl font-extrabold text-green-700 mt-2">Precio Total: 0 CLP</p>
+                    <p id="price-calculation-warning" class="text-xs text-red-500 mt-1">* La distancia y el precio se calcularán automáticamente.</p>
+                </div>
+
+                <button type="submit" id="reserve-btn"
+                        class="w-full py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-md disabled:opacity-50" disabled>
+                    Generar Reserva
+                </button>
+            </form>
+            
+            <div class="mt-8 pt-4 border-t border-gray-200 flex justify-end items-center">
+                <button id="logout-btn" class="px-4 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition duration-200 hidden">
+                    Cerrar Sesión
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE AUTENTICACIÓN -->
+    <div id="auth-modal" class="modal">
+        <div class="modal-content">
+            <h1 id="auth-title" class="text-2xl font-bold text-center mb-6 text-indigo-700">Iniciar Sesión</h1>
+            
+            <div id="form-container"></div>
+            
+            <div id="message-box" class="mt-4 p-3 rounded-lg text-sm hidden"></div>
+            
+            <div class="mt-6 text-center">
+                <button type="button" id="toggle-auth-btn" class="text-indigo-600 hover:text-indigo-800 text-sm transition duration-150">
+                    ¿No tienes una cuenta? Regístrate
+                </button>
+                <br>
+                <button type="button" id="forgot-password-btn" class="text-gray-500 hover:text-gray-700 text-xs mt-2 transition duration-150">
+                    ¿Olvidaste tu contraseña?
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports (Module Type) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged, 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            signOut,
+            sendPasswordResetEmail
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            setDoc, 
+            collection, 
+            query, 
+            onSnapshot, 
+            addDoc
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- 1. VARIABLES GLOBALES DEL ENTORNO ---
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- 2. CONFIGURACIÓN: CLAVES API Y URLS DE GOOGLE FORMS ---
+        const GEMINI_API_KEY = "AIzaSyCdSwvFd-6z-EwU48pZyixM2B7kODuip5M";
+        
+        // La URL de envío de tu Google Form. Se deriva de la URL de visualización.
+        const FORM_ACTION_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSco3kE7KBgmxkEfXBmU5pWx8NZ5FrckGAaeURq1q7OBO9bbfQ/formResponse';
+        
+        // Identificadores de Campo (Entry IDs) de tu Google Form
+        const ENTRY_ID_PACIENTE = '855117364';
+        const ENTRY_ID_TELEFONO = '685973984';
+        const ENTRY_ID_ORIGEN = '1015959693';
+        const ENTRY_ID_DESTINO = '1980815919';
+        const ENTRY_ID_FECHAHORA = '662469139'; // Este es el ID base. El código añade los sufijos _year, _month, etc.
+        const ENTRY_ID_RETORNO = '1858484742';
+        const ENTRY_ID_KM = '1400786708';
+        const ENTRY_ID_PRECIO = '697459237';
+        const ENTRY_ID_COMENTARIOS = '1986217648';
+        const ENTRY_ID_CODIGO = '795652034';
+
+
+        // --- 3. INICIALIZACIÓN DE FIREBASE ---
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("ERROR: firebaseConfig no está disponible. La autenticación no funcionará.");
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUser = null;
+        let isLoginView = true;
+        let patientList = []; 
+        let currentDistanceData = { km: 0, minutes: 0, price: 0 };
+
+
+        // --- 4. ELEMENTOS DEL DOM Y ESTADO ---
+        const reservationView = document.getElementById('reservation-view');
+        const reservationForm = document.getElementById('reservation-form');
+        const reserveBtn = document.getElementById('reserve-btn');
+        const distanceInfo = document.getElementById('distance-info');
+        const priceInfo = document.getElementById('price-info');
+        const patientInput = document.getElementById('patient-name');
+        const phoneInput = document.getElementById('patient-phone');
+        const originInput = document.getElementById('address-origin');
+        const destinationInput = document.getElementById('address-destination');
+        const dateTimeInput = document.getElementById('reservation-datetime');
+        const returnCheckbox = document.getElementById('retorno-checkbox');
+        const commentsInput = document.getElementById('comments');
+        const autocompleteList = document.getElementById('patient-autocomplete-list');
+        const authRequiredMessage = document.getElementById('auth-required-message');
+        const logoutBtn = document.getElementById('logout-btn');
+        const resultContainer = document.getElementById('reservation-result-container');
+        const calcStatus = document.getElementById('calculation-status');
+
+        // Modal Auth elements
+        const authModal = document.getElementById('auth-modal');
+        const authTitle = document.getElementById('auth-title');
+        const formContainer = document.getElementById('form-container');
+        const toggleAuthBtn = document.getElementById('toggle-auth-btn');
+        const messageBox = document.getElementById('message-box');
+        const openAuthModalBtn = document.getElementById('open-auth-modal-btn');
+        const forgotPasswordBtn = document.getElementById('forgot-password-btn');
+
+        // --- 5. FUNCIONES DE UI Y UTILIDADES ---
+
+        function alertMessage(message, classes) {
+            messageBox.textContent = message;
+            messageBox.className = `mt-4 p-3 rounded-lg text-sm ${classes}`;
+            messageBox.classList.remove('hidden');
+        }
+
+        // Habilita/deshabilita todos los campos del formulario
+        function toggleFormFields(enabled) {
+            const fields = reservationForm.querySelectorAll('input, textarea, button');
+            fields.forEach(field => {
+                if (field.id !== 'open-auth-modal-btn') { // No deshabilitar el botón de login
+                     field.disabled = !enabled;
+                }
+            });
+            authRequiredMessage.classList.toggle('hidden', enabled);
+            logoutBtn.classList.toggle('hidden', !enabled);
+            reserveBtn.disabled = true; // Siempre deshabilitar al inicio, hasta que se calcule el precio.
+        }
+
+        // Muestra el modal y su contenido
+        function openAuthModal() {
+            authModal.style.display = 'block';
+            isLoginView = true;
+            renderLoginForm();
+        }
+        function closeAuthModal() {
+            authModal.style.display = 'none';
+        }
+        window.onclick = function(event) {
+            if (event.target === authModal) closeAuthModal();
+        }
+        openAuthModalBtn.addEventListener('click', openAuthModal);
+
+        // Cálculo del precio según la lógica de negocio (por un solo viaje)
+        function calculatePrice(km) {
+            if (km < 100) return km * 1200; // CLP
+            else return km * 1050; // CLP
+        }
+        
+        // Genera un código de reserva único (ejemplo simple)
+        function generateReservationCode() {
+            return 'RES-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+        }
+
+        // --- 6. INTEGRACIÓN GOOGLE MAPS (Cálculo de Distancia Real) ---
+
+        let directionsService = null;
+        let geocoderService = null;
+
+        function initMapsServices() {
+            if (typeof google !== 'undefined' && google.maps) {
+                directionsService = new google.maps.DistanceMatrixService();
+                geocoderService = new google.maps.Geocoder();
+            } else {
+                // Fallback si la API de Maps no carga
+                console.warn("Google Maps API no cargó. No se podrá calcular la distancia real.");
+            }
+        }
+
+        // Función para calcular la distancia y el tiempo reales
+        function calculateRealDistance(origin, destination) {
+            return new Promise((resolve, reject) => {
+                if (!directionsService) {
+                    return reject("Servicios de Mapas no disponibles.");
+                }
+
+                directionsService.getDistanceMatrix(
+                    {
+                        origins: [origin],
+                        destinations: [destination],
+                        travelMode: google.maps.TravelMode.DRIVING,
+                        unitSystem: google.maps.UnitSystem.METRIC,
+                    },
+                    (response, status) => {
+                        if (status === 'OK' && response.rows[0].elements[0].status === 'OK') {
+                            const element = response.rows[0].elements[0];
+                            const km = Math.round(element.distance.value / 1000); // Metros a KM
+                            const minutes = Math.round(element.duration.value / 60); // Segundos a Minutos
+                            resolve({ km, minutes });
+                        } else {
+                            reject(`Error al obtener distancia: ${status} / ${response.rows[0].elements[0].status}`);
+                        }
+                    }
+                );
+            });
+        }
+        
+        // Función que actualiza la UI basándose en el cálculo de distancia/precio
+        async function calculateAndDisplayPrice() {
+            const origin = originInput.value.trim();
+            const destination = destinationInput.value.trim();
+            const isReturn = returnCheckbox.checked;
+            
+            resultContainer.innerHTML = ''; // Limpiar resultados anteriores
+            reserveBtn.disabled = true;
+
+            if (!origin || !destination) {
+                distanceInfo.textContent = "Distancia: -- Km | Tiempo: -- min";
+                priceInfo.textContent = "Precio Total: 0 CLP";
+                return;
+            }
+            
+            calcStatus.classList.remove('hidden');
+
+            try {
+                // 1. Obtener distancia real
+                const { km, minutes } = await calculateRealDistance(origin, destination); 
+                
+                // 2. Calcular precio de una sola vía
+                const singlePrice = calculatePrice(km);
+                
+                // 3. Aplicar retorno si es necesario para el total mostrado
+                const totalPrice = isReturn ? singlePrice * 2 : singlePrice;
+
+                currentDistanceData = { km, minutes, singlePrice };
+
+                distanceInfo.textContent = `Distancia: ${km} Km | Tiempo: ${minutes} min`;
+                priceInfo.textContent = `Precio Total: ${totalPrice.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}`;
+
+                // Habilitar botón de reserva solo si el formulario está lleno
+                if (patientInput.value && phoneInput.value && dateTimeInput.value && !authRequiredMessage.classList.contains('hidden')) {
+                     reserveBtn.disabled = false;
+                }
+                document.getElementById('price-calculation-warning').textContent = "* La distancia y el precio se calcularán automáticamente.";
+
+            } catch (error) {
+                console.error("Error en el cálculo de distancia:", error);
+                distanceInfo.textContent = "Error de cálculo. Revise las direcciones.";
+                priceInfo.textContent = "Precio Total: ERROR";
+                reserveBtn.disabled = true;
+                document.getElementById('price-calculation-warning').textContent = `ERROR: No se pudo calcular la distancia. ${error}`;
+            } finally {
+                calcStatus.classList.add('hidden');
+            }
+        }
+        
+        // --- 7. INTEGRACIÓN GEMINI (AI) ---
+
+        // Utilidad para llamar a la API de Gemini con manejo de reintentos
+        async function callGeminiApi(payload, maxRetries = 3) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+            
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && attempt < maxRetries - 1) {
+                            const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue;
+                        }
+                        throw new Error(`API Error: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text || 'Error al generar el contenido de la IA.';
+                    return text;
+
+                } catch (error) {
+                    if (attempt === maxRetries - 1) {
+                        console.error("Gemini API failed after all retries:", error);
+                        throw new Error("No se pudo contactar al servicio de IA.");
+                    }
+                }
+            }
+        }
+
+        // Genera el borrador de correo electrónico usando Gemini
+        async function generateConfirmationDraft(reservationData, isReturn) {
+            const totalReservations = isReturn ? 2 : 1;
+            const reservationsText = isReturn 
+                ? `1. Viaje de IDA (Código: ${reservationData[0].codigoReserva}) desde ${reservationData[0].origen} hasta ${reservationData[0].destino}. 
+                   2. Viaje de RETORNO (Código: ${reservationData[1].codigoReserva}) desde ${reservationData[1].origen} hasta ${reservationData[1].destino}.`
+                : `Viaje Único (Código: ${reservationData[0].codigoReserva}) desde ${reservationData[0].origen} hasta ${reservationData[0].destino}.`;
+            
+            const totalPrecio = isReturn ? reservationData[0].precioCLP * 2 : reservationData[0].precioCLP;
+            
+            const prompt = `
+                Redacta un correo electrónico de confirmación de reserva formal y profesional para un servicio de transporte de pacientes. 
+                El correo debe comenzar con "Gracias por su reserva" y debe confirmar un total de ${totalReservations} traslados con los siguientes detalles:
+                
+                - Cliente (Email): ${currentUser.email}
+                - Paciente: ${reservationData[0].nombrePaciente}
+                - Teléfono: ${reservationData[0].telefonoPaciente}
+                - Fecha y Hora del Viaje (IDA): ${new Date(reservationData[0].fechaHora).toLocaleString('es-CL')}
+                - Comentarios de Movilidad: ${reservationData[0].comentarios || 'Ninguno'}
+                - **Detalles del/los Traslado(s):** ${reservationsText}
+                - **Precio Total Estimado (CLP):** ${totalPrecio.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}
+
+                El tono debe ser amable, tranquilizador y profesional.
+            `;
+            
+            const systemPrompt = "Actúa como el asistente de comunicación oficial de un servicio de transporte de pacientes. Genera solo el cuerpo del correo electrónico, sin incluir la línea de Asunto ni la firma final. Utiliza formato de texto simple, no Markdown.";
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            return callGeminiApi(payload);
+        }
+
+        // --- 8. LÓGICA DE FIREBASE (Autocompletado de Pacientes) ---
+        
+        function setupPatientListener() {
+            if (!currentUser) return;
+            const patientsRef = collection(db, `artifacts/${appId}/public/data/patients`);
+            const q = query(patientsRef);
+
+            onSnapshot(q, (snapshot) => {
+                patientList = [];
+                snapshot.forEach((doc) => {
+                    patientList.push({ id: doc.id, ...doc.data() });
+                });
+            }, (error) => {
+                console.error("Error al escuchar pacientes:", error);
+            });
+        }
+        
+        patientInput.addEventListener('input', () => {
+            const searchText = patientInput.value.toLowerCase().trim();
+            autocompleteList.innerHTML = '';
+
+            if (searchText.length < 2 || !currentUser) {
+                autocompleteList.classList.add('hidden');
+                return;
+            }
+
+            const filteredPatients = patientList.filter(p => 
+                p.nombreCompleto.toLowerCase().includes(searchText)
+            ).slice(0, 5); 
+
+            if (filteredPatients.length > 0) {
+                filteredPatients.forEach(patient => {
+                    const div = document.createElement('div');
+                    div.className = 'autocomplete-item';
+                    div.textContent = patient.nombreCompleto;
+                    div.addEventListener('click', () => {
+                        patientInput.value = patient.nombreCompleto;
+                        autocompleteList.classList.add('hidden');
+                    });
+                    autocompleteList.appendChild(div);
+                });
+                autocompleteList.classList.remove('hidden');
+            } else {
+                autocompleteList.classList.add('hidden');
+            }
+        });
+        
+        document.addEventListener('click', (e) => {
+            if (e.target !== patientInput) {
+                autocompleteList.classList.add('hidden');
+            }
+        });
+
+
+        // --- 9. LÓGICA DE AUTENTICACIÓN (Modal) ---
+
+        function renderLoginForm() {
+            authTitle.textContent = "Iniciar Sesión";
+            toggleAuthBtn.textContent = "¿No tienes una cuenta? Regístrate";
+            forgotPasswordBtn.classList.remove('hidden');
+            formContainer.innerHTML = `
+                <form id="auth-form" class="space-y-4">
+                    <div>
+                        <input type="email" id="email" required placeholder="Correo Electrónico"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" />
+                    </div>
+                    <div>
+                        <input type="password" id="password" required placeholder="Contraseña"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" />
+                    </div>
+                    <button type="submit" 
+                            class="w-full py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-md">
+                        Acceder
+                    </button>
+                </form>
+            `;
+            document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
+        }
+
+        function renderSignUpForm() {
+            authTitle.textContent = "Crear Cuenta (Registro)";
+            toggleAuthBtn.textContent = "¿Ya tienes una cuenta? Inicia Sesión";
+            forgotPasswordBtn.classList.add('hidden');
+            formContainer.innerHTML = `
+                <form id="auth-form" class="space-y-4">
+                    <div>
+                        <input type="email" id="email" required placeholder="Correo Electrónico"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" />
+                    </div>
+                    <div>
+                        <input type="password" id="password" required placeholder="Contraseña (Mínimo 6 caracteres)"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" />
+                    </div>
+                    <button type="submit" 
+                            class="w-full py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-200 shadow-md">
+                        Registrarme
+                    </button>
+                </form>
+            `;
+            document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
+        }
+
+        async function handleSignIn(email, password) {
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                alertMessage("Inicio de sesión exitoso.", 'bg-green-100 text-green-700');
+                closeAuthModal();
+            } catch (error) {
+                let msg = "Error al iniciar sesión. Verifica tu email y contraseña.";
+                if (error.code === 'auth/user-not-found') msg = "No existe un usuario con ese correo.";
+                else if (error.code === 'auth/wrong-password') msg = "Contraseña incorrecta.";
+                alertMessage(msg, 'bg-red-100 text-red-700');
+            }
+        }
+
+        async function handleSignUp(email, password) {
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                alertMessage("Registro exitoso. ¡Iniciando sesión!", 'bg-green-100 text-green-700');
+                closeAuthModal();
+            } catch (error) {
+                let msg = "Error al registrarse. Intenta con otro correo o una contraseña más segura.";
+                if (error.code === 'auth/email-already-in-use') msg = "Este correo ya está registrado.";
+                else if (error.code === 'auth/weak-password') msg = "La contraseña debe tener al menos 6 caracteres.";
+                alertMessage(msg, 'bg-red-100 text-red-700');
+            }
+        }
+        
+        function handleAuthSubmit(event) {
+            event.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            messageBox.classList.add('hidden');
+
+            if (isLoginView) handleSignIn(email, password);
+            else handleSignUp(email, password);
+        }
+
+        toggleAuthBtn.addEventListener('click', () => {
+            isLoginView = !isLoginView;
+            if (isLoginView) renderLoginForm();
+            else renderSignUpForm();
+        });
+
+        // Manejador de Recuperación de Contraseña
+        forgotPasswordBtn.addEventListener('click', async () => {
+            const email = prompt("Ingresa el correo electrónico para recuperar tu contraseña:");
+            if (email) {
+                try {
+                    await sendPasswordResetEmail(auth, email);
+                    alertMessage(`Se ha enviado un correo de recuperación a ${email}. Revisa tu bandeja de entrada.`, 'bg-green-100 text-green-700');
+                } catch (error) {
+                    alertMessage("Error al enviar el correo de recuperación. Revisa el correo ingresado.", 'bg-red-100 text-red-700');
+                }
+            }
+        });
+
+        // Manejador de Logout
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await signOut(auth);
+                // onAuthStateChanged se encargará de actualizar la UI
+            } catch (error) {
+                console.error("Error al cerrar sesión:", error);
+            }
+        });
+
+        // --- 10. LÓGICA DEL FORMULARIO DE RESERVA (Doble Envío a Google Forms) ---
+        
+        // Crea los datos para un solo viaje
+        function createFormData(reservation, isReturnTrip = false) {
+            const formData = new FormData();
+            
+            // 1. Descomponer la fecha y hora para Google Forms
+            const date = new Date(reservation.fechaHora);
+            const formattedMonth = date.getMonth() + 1;
+            const formattedDay = date.getDate();
+            const formattedYear = date.getFullYear();
+            const formattedHour = date.getHours();
+            const formattedMinute = date.getMinutes();
+            
+            // 2. Llenar el objeto FormData con los IDs del formulario
+            formData.append(`entry.${ENTRY_ID_PACIENTE}`, reservation.nombrePaciente);
+            formData.append(`entry.${ENTRY_ID_TELEFONO}`, reservation.telefonoPaciente);
+            formData.append(`entry.${ENTRY_ID_ORIGEN}`, isReturnTrip ? reservation.destino : reservation.origen);
+            formData.append(`entry.${ENTRY_ID_DESTINO}`, isReturnTrip ? reservation.origen : reservation.destino);
+            
+            // Campos Fecha y Hora (Corrección de sub-IDs)
+            formData.append(`entry.${ENTRY_ID_FECHAHORA}_year`, formattedYear);
+            formData.append(`entry.${ENTRY_ID_FECHAHORA}_month`, formattedMonth);
+            formData.append(`entry.${ENTRY_ID_FECHAHORA}_day`, formattedDay);
+            formData.append(`entry.${ENTRY_ID_FECHAHORA}_hour`, formattedHour);
+            formData.append(`entry.${ENTRY_ID_FECHAHORA}_minute`, formattedMinute);
+            
+            // Checkbox: 'Sí' solo si aplica
+            formData.append(`entry.${ENTRY_ID_RETORNO}`, isReturnTrip ? 'Sí' : ''); 
+
+            formData.append(`entry.${ENTRY_ID_KM}`, reservation.km);
+            formData.append(`entry.${ENTRY_ID_PRECIO}`, reservation.precioCLP.toLocaleString('es-CL'));
+            formData.append(`entry.${ENTRY_ID_COMENTARIOS}`, reservation.comentarios);
+            formData.append(`entry.${ENTRY_ID_CODIGO}`, reservation.codigoReserva);
+
+            return formData;
+        }
+
+        // Envía el FormData a Google Forms
+        async function sendToGoogleForms(formData) {
+            const url = FORM_ACTION_URL;
+            await fetch(url, {
+                method: 'POST',
+                mode: 'no-cors', // Necesario para evitar errores de CORS con el endpoint de Google Forms
+                body: formData,
+            });
+        }
+        
+        // Manejador del submit de la reserva
+        reservationForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            reserveBtn.disabled = true;
+            resultContainer.innerHTML = '';
+            
+            const patientName = patientInput.value.trim();
+            const patientPhone = phoneInput.value.trim();
+            const origin = originInput.value.trim();
+            const destination = destinationInput.value.trim();
+            const dateTimeString = dateTimeInput.value;
+            const isReturn = returnCheckbox.checked;
+            const comments = commentsInput.value.trim();
+
+            const selectedDate = new Date(dateTimeString);
+            const now = new Date();
+            const minTime = now.getTime() + (2 * 60 * 60 * 1000); // Mínimo 2 horas de anticipación
+
+            if (selectedDate.getTime() < minTime) {
+                document.getElementById('price-calculation-warning').textContent = "ERROR: La reserva debe ser con al menos 2 horas de anticipación.";
+                reserveBtn.disabled = false;
+                return;
+            }
+            
+            // Datos de distancia y precio ya calculados y almacenados
+            const km = currentDistanceData.km;
+            const singlePrice = currentDistanceData.singlePrice;
+            const finalPrice = isReturn ? singlePrice * 2 : singlePrice;
+
+            const reservationBase = {
+                nombrePaciente: patientName,
+                telefonoPaciente: patientPhone,
+                origen: origin,
+                destino: destination,
+                fechaHora: selectedDate.toISOString(),
+                km: km,
+                precioCLP: singlePrice, // Precio de una sola vía
+                comentarios: comments,
+            };
+            
+            const reservations = [];
+            
+            // 1. VIAJE DE IDA (O viaje único)
+            const codeIda = generateReservationCode();
+            const dataIda = { ...reservationBase, codigoReserva: codeIda, retorno: false };
+            reservations.push(dataIda);
+
+            // 2. Si hay retorno, agregamos el viaje de vuelta con direcciones invertidas
+            if (isReturn) {
+                const codeRetorno = generateReservationCode();
+                const dataRetorno = { 
+                    ...reservationBase, 
+                    origen: destination, // Direcciones invertidas
+                    destino: origin,     // Direcciones invertidas
+                    codigoReserva: codeRetorno, 
+                    retorno: true 
+                };
+                reservations.push(dataRetorno);
+            }
+
+            // --- MOSTRAR CARGA Y PROCESAR ---
+            const loadingHtml = `<div id="loading-spinner" class="flex justify-center items-center space-x-2 my-4">
+                                    <div class="loader"></div>
+                                    <p class="text-sm text-indigo-600 font-medium">Generando confirmación y enviando reserva(s)...</p>
+                                </div>`;
+            resultContainer.innerHTML = loadingHtml;
+            reservationForm.classList.add('hidden');
+            
+            try {
+                // 3. ENVIAR A GOOGLE FORMS y guardar en Firestore
+                for (const res of reservations) {
+                    // A. Enviar a Google Forms
+                    const formData = createFormData(res, res.retorno);
+                    await sendToGoogleForms(formData);
+                    
+                    // B. Guardar en Firestore (para Autocompletado y registro)
+                    const userReservationsRef = collection(db, `artifacts/${appId}/users/${currentUser.uid}/reservations`);
+                    await addDoc(userReservationsRef, { 
+                        ...res, 
+                        emailUsuario: currentUser.email,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                
+                // C. Actualizar nombre de paciente en lista pública
+                const patientRef = doc(db, `artifacts/${appId}/public/data/patients`, patientName.toLowerCase().replace(/\s/g, '_'));
+                await setDoc(patientRef, {
+                    nombreCompleto: patientName,
+                    userId: currentUser.uid,
+                    ultimaReserva: new Date().toISOString()
+                }, { merge: true });
+
+                // 4. Generar el borrador del correo con Gemini ✨
+                const aiDraft = await generateConfirmationDraft(reservations, isReturn);
+
+                // --- MOSTRAR RESUMEN DE ÉXITO ---
+                document.getElementById('loading-spinner')?.remove();
+
+                const codesList = reservations.map(r => 
+                    `<span class="font-bold">${r.codigoReserva}</span>`).join(' y ');
+
+                const confirmationSummary = `
+                    <p class="text-xl font-bold text-green-700 mb-3">✅ ¡Reserva Generada con Éxito!</p>
+                    <p class="text-gray-700 mb-4">Su traslado ha sido agendado. El código(s) asignado(s) es(son): ${codesList}</p>
+                    
+                    <div class="border border-gray-200 p-3 rounded-lg text-sm bg-white mb-6">
+                        <p><strong>Paciente:</strong> ${patientName}</p>
+                        <p><strong>Teléfono:</strong> ${patientPhone}</p>
+                        <p><strong>Fecha y Hora (Ida):</strong> ${new Date(dataIda.fechaHora).toLocaleString('es-CL')}</p>
+                        <p><strong>Recorrido:</strong> ${isReturn ? 'IDA y RETORNO' : 'SÓLO IDA'}</p>
+                        <p class="font-bold text-green-700"><strong>Precio Final:</strong> ${finalPrice.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</p>
+                    </div>
+
+                    <h3 class="text-lg font-bold text-indigo-700 mb-2 flex items-center">
+                        <span class="mr-2">✉️ Borrador de Correo de Confirmación (Generado por AI)</span>
+                    </h3>
+                    <textarea class="w-full h-48 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" readonly>
+${aiDraft}
+                    </textarea>
+                    <button type="button" onclick="window.location.reload()" 
+                            class="mt-4 w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-md">
+                        Hacer otra reserva
+                    </button>
+                `;
+
+                const resultBox = document.createElement('div');
+                resultBox.className = 'p-6 bg-green-50 border border-green-200 rounded-xl space-y-3';
+                resultBox.innerHTML = confirmationSummary;
+                resultContainer.appendChild(resultBox);
+
+            } catch (error) {
+                document.getElementById('loading-spinner')?.remove();
+                reservationForm.classList.remove('hidden');
+                document.getElementById('price-calculation-warning').textContent = `ERROR FATAL: No se pudo completar la reserva o el envío de datos. ${error.message}`;
+                reserveBtn.disabled = false;
+            } 
+        });
+
+
+        // --- 11. INICIO DE LA APLICACIÓN ---
+
+        function updateUI(user) {
+            currentUser = user;
+            if (user) {
+                // Usuario autenticado
+                toggleFormFields(true);
+                setupPatientListener();
+            } else {
+                // Usuario NO autenticado
+                toggleFormFields(false);
+                // Si no hay usuario, mostrar el modal de autenticación
+                openAuthModal(); 
+            }
+        }
+
+        // Monitorear el estado de autenticación (CRÍTICO)
+        onAuthStateChanged(auth, (user) => {
+            updateUI(user);
+        });
+
+        // Inicio de servicios
+        initMapsServices();
+    </script>
+</body>
+</html>
