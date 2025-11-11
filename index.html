@@ -23,6 +23,10 @@
             justify-content: center;
             align-items: center;
         }
+        /* ESTILO CRÍTICO: Ocultar el formulario principal por defecto */
+        #reservation-view {
+            display: none; 
+        }
         /* Estilos para la lista de autocompletado */
         #patient-autocomplete-list {
             position: absolute;
@@ -64,7 +68,6 @@
             height: 100%;
             overflow: auto;
             background-color: rgba(0,0,0,0.5);
-            /* Usamos la clase 'hidden' de Tailwind para ocultar/mostrar */
         }
         .modal-content {
             background-color: #fefefe;
@@ -83,6 +86,7 @@
     <div id="app" class="container-bg p-4 w-full">
         
         <!-- PANTALLA 2: FORMULARIO DE RESERVA (Dashboard Principal) -->
+        <!-- Inicialmente oculto por CSS. Se mostrará solo si el usuario está logueado -->
         <div id="reservation-view" class="w-full max-w-2xl bg-white rounded-xl shadow-2xl p-6 md:p-8">
             <h1 class="text-3xl font-bold text-center mb-2 text-indigo-700">Reserva de Viaje</h1>
             <p class="text-center text-sm text-gray-500 mb-6">Completa los datos para calcular el costo de tu traslado.</p>
@@ -174,8 +178,8 @@
     </div>
 
     <!-- MODAL DE AUTENTICACIÓN -->
-    <!-- Inicialmente oculto con 'hidden' de Tailwind -->
-    <div id="auth-modal" class="modal hidden">
+    <!-- CRÍTICO: El modal es visible por defecto, forzando la autenticación -->
+    <div id="auth-modal" class="modal">
         <div class="modal-content">
             <h1 id="auth-title" class="text-2xl font-bold text-center mb-6 text-indigo-700">Iniciar Sesión</h1>
             
@@ -311,12 +315,14 @@
 
         // Muestra el modal y su contenido
         function openAuthModal() {
-            authModal.classList.remove('hidden'); // Usa classList para mejor fiabilidad
+            authModal.classList.remove('hidden'); // Mostrar modal
+            reservationView.style.display = 'none'; // CRÍTICO: Ocultar el formulario principal
             isLoginView = true;
             renderLoginForm();
         }
         function closeAuthModal() {
-            authModal.classList.add('hidden'); // Usa classList para mejor fiabilidad
+            authModal.classList.add('hidden'); // Ocultar modal
+            reservationView.style.display = 'flex'; // CRÍTICO: Mostrar el formulario principal
         }
         window.onclick = function(event) {
             if (event.target === authModal) closeAuthModal();
@@ -693,4 +699,206 @@
             formData.append(`entry.${ENTRY_ID_FECHAHORA}_minute`, formattedMinute);
             
             // Checkbox: 'Sí' solo si aplica
-            formData.append(`entry.${ENTRY_ID_RETORNO}`, isReturnTrip ? 'Sí'
+            formData.append(`entry.${ENTRY_ID_RETORNO}`, isReturnTrip ? 'Sí' : ''); 
+
+            formData.append(`entry.${ENTRY_ID_KM}`, reservation.km);
+            formData.append(`entry.${ENTRY_ID_PRECIO}`, reservation.precioCLP.toLocaleString('es-CL'));
+            formData.append(`entry.${ENTRY_ID_COMENTARIOS}`, reservation.comentarios);
+            formData.append(`entry.${ENTRY_ID_CODIGO}`, reservation.codigoReserva);
+
+            return formData;
+        }
+
+        // Envía el FormData a Google Forms
+        async function sendToGoogleForms(formData) {
+            const url = FORM_ACTION_URL;
+            await fetch(url, {
+                method: 'POST',
+                mode: 'no-cors', // Necesario para evitar errores de CORS con el endpoint de Google Forms
+                body: formData,
+            });
+        }
+        
+        // Manejador del submit de la reserva
+        reservationForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            reserveBtn.disabled = true;
+            resultContainer.innerHTML = '';
+            
+            const patientName = patientInput.value.trim();
+            const patientPhone = phoneInput.value.trim();
+            const origin = originInput.value.trim();
+            const destination = destinationInput.value.trim();
+            const dateTimeString = dateTimeInput.value;
+            const isReturn = returnCheckbox.checked;
+            const comments = commentsInput.value.trim();
+
+            const selectedDate = new Date(dateTimeString);
+            const now = new Date();
+            const minTime = now.getTime() + (2 * 60 * 60 * 1000); // Mínimo 2 horas de anticipación
+
+            if (selectedDate.getTime() < minTime) {
+                document.getElementById('price-calculation-warning').textContent = "ERROR: La reserva debe ser con al menos 2 horas de anticipación.";
+                reserveBtn.disabled = false;
+                return;
+            }
+            
+            // Si el precio no se ha calculado, forzar cálculo
+            if (currentDistanceData.km === 0) {
+                 await calculateAndDisplayPrice();
+                 if (currentDistanceData.km === 0) {
+                     document.getElementById('price-calculation-warning').textContent = "ERROR: No se pudo calcular el precio. Intente nuevamente.";
+                     reserveBtn.disabled = false;
+                     return;
+                 }
+            }
+
+            const km = currentDistanceData.km;
+            const singlePrice = currentDistanceData.singlePrice;
+
+            const reservationBase = {
+                nombrePaciente: patientName,
+                telefonoPaciente: patientPhone,
+                origen: origin,
+                destino: destination,
+                fechaHora: selectedDate.toISOString(),
+                km: km,
+                precioCLP: singlePrice, // Precio de una sola vía
+                comentarios: comments,
+            };
+            
+            const reservations = [];
+            
+            // 1. VIAJE DE IDA (O viaje único)
+            const codeIda = generateReservationCode();
+            const dataIda = { ...reservationBase, codigoReserva: codeIda, retorno: false };
+            reservations.push(dataIda);
+
+            // 2. Si hay retorno, agregamos el viaje de vuelta con direcciones invertidas
+            if (isReturn) {
+                const codeRetorno = generateReservationCode();
+                const dataRetorno = { 
+                    ...reservationBase, 
+                    origen: destination, // Direcciones invertidas
+                    destino: origin,     // Direcciones invertidas
+                    codigoReserva: codeRetorno, 
+                    retorno: true 
+                };
+                reservations.push(dataRetorno);
+            }
+
+            // --- MOSTRAR CARGA Y PROCESAR ---
+            const loadingHtml = `<div id="loading-spinner" class="flex justify-center items-center space-x-2 my-4">
+                                    <div class="loader"></div>
+                                    <p class="text-sm text-indigo-600 font-medium">Generando confirmación y enviando reserva(s)...</p>
+                                </div>`;
+            resultContainer.innerHTML = loadingHtml;
+            reservationForm.classList.add('hidden');
+            
+            try {
+                // 3. ENVIAR A GOOGLE FORMS y guardar en Firestore
+                for (const res of reservations) {
+                    // A. Enviar a Google Forms
+                    const formData = createFormData(res, res.retorno);
+                    await sendToGoogleForms(formData);
+                    
+                    // B. Guardar en Firestore (para Autocompletado y registro)
+                    const userReservationsRef = collection(db, `artifacts/${appId}/users/${currentUser.uid}/reservations`);
+                    await addDoc(userReservationsRef, { 
+                        ...res, 
+                        emailUsuario: currentUser.email,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                
+                // C. Actualizar nombre de paciente en lista pública
+                const patientRef = doc(db, `artifacts/${appId}/public/data/patients`, patientName.toLowerCase().replace(/\s/g, '_'));
+                await setDoc(patientRef, {
+                    nombreCompleto: patientName,
+                    userId: currentUser.uid,
+                    ultimaReserva: new Date().toISOString()
+                }, { merge: true });
+
+                // 4. Generar el borrador del correo con Gemini ✨
+                const aiDraft = await generateConfirmationDraft(reservations, isReturn);
+
+                // --- MOSTRAR RESUMEN DE ÉXITO ---
+                document.getElementById('loading-spinner')?.remove();
+
+                const codesList = reservations.map(r => 
+                    `<span class="font-bold">${r.codigoReserva}</span>`).join(' y ');
+                const finalPrice = isReturn ? singlePrice * 2 : singlePrice;
+
+                const confirmationSummary = `
+                    <p class="text-xl font-bold text-green-700 mb-3">✅ ¡Reserva Generada con Éxito!</p>
+                    <p class="text-gray-700 mb-4">Su traslado ha sido agendado. El código(s) asignado(s) es(son): ${codesList}</p>
+                    
+                    <div class="border border-gray-200 p-3 rounded-lg text-sm bg-white mb-6">
+                        <p><strong>Paciente:</strong> ${patientName}</p>
+                        <p><strong>Teléfono:</strong> ${patientPhone}</p>
+                        <p><strong>Fecha y Hora (Ida):</strong> ${new Date(dataIda.fechaHora).toLocaleString('es-CL')}</p>
+                        <p><strong>Recorrido:</strong> ${isReturn ? 'IDA y RETORNO' : 'SÓLO IDA'}</p>
+                        <p class="font-bold text-green-700"><strong>Precio Final:</strong> ${finalPrice.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</p>
+                    </div>
+
+                    <h3 class="text-lg font-bold text-indigo-700 mb-2 flex items-center">
+                        <span class="mr-2">✉️ Borrador de Correo de Confirmación (Generado por AI)</span>
+                    </h3>
+                    <textarea class="w-full h-48 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" readonly>
+${aiDraft}
+                    </textarea>
+                    <button type="button" onclick="window.location.reload()" 
+                            class="mt-4 w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-md">
+                        Hacer otra reserva
+                    </button>
+                `;
+
+                const resultBox = document.createElement('div');
+                resultBox.className = 'p-6 bg-green-50 border border-green-200 rounded-xl space-y-3';
+                resultBox.innerHTML = confirmationSummary;
+                resultContainer.appendChild(resultBox);
+
+            } catch (error) {
+                document.getElementById('loading-spinner')?.remove();
+                reservationForm.classList.remove('hidden');
+                document.getElementById('price-calculation-warning').textContent = `ERROR FATAL: No se pudo completar la reserva o el envío de datos. ${error.message}`;
+                reserveBtn.disabled = false;
+            } 
+        });
+
+
+        // --- 11. INICIO DE LA APLICACIÓN ---
+
+        function updateUI(user) {
+            currentUser = user;
+            if (user) {
+                // Usuario autenticado: OCULTAR MODAL, MOSTRAR FORMULARIO
+                closeAuthModal(); // Ahora oculta el modal
+                reservationView.style.display = 'flex'; // Muestra el formulario
+                toggleFormFields(true);
+                setupPatientListener();
+            } else {
+                // Usuario NO autenticado: MOSTRAR MODAL, OCULTAR FORMULARIO
+                reservationView.style.display = 'none'; // Oculta el formulario
+                toggleFormFields(false);
+                openAuthModal(); // Ahora muestra el modal
+            }
+        }
+
+        // Monitorear el estado de autenticación (CRÍTICO)
+        onAuthStateChanged(auth, (user) => {
+            updateUI(user);
+        });
+
+        // Event listeners para recalcular precio al cambiar inputs
+        [originInput, destinationInput, returnCheckbox].forEach(el => {
+            el.addEventListener('change', calculateAndDisplayPrice);
+            // También escuchar la entrada para actualizaciones más rápidas
+            el.addEventListener('input', calculateAndDisplayPrice); 
+        });
+        
+        // Inicializar servicios de Google Maps
+        initMapsServices();
+    </script>
+</body>
+</html>
